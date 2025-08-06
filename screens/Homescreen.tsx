@@ -1,9 +1,10 @@
-import { View, Text, TextInput, StyleSheet, FlatList, ImageBackground } from 'react-native';
+import { View, Text, TextInput, StyleSheet, FlatList } from 'react-native';
 import { useState, useEffect } from 'react';
 import { Button } from '@rneui/themed';
 import { supabase } from '../lib/supabase';
 import { RootStackParamList } from '../types';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
+import * as Crypto from 'expo-crypto';
 
 type Todo = {
   id: number;
@@ -11,6 +12,38 @@ type Todo = {
 };
 
 type HomeScreenProps = NativeStackScreenProps<RootStackParamList, 'Home'>;
+
+const encrypt = async (text: string, key: string): Promise<string> => {
+  const keyHash = await Crypto.digestStringAsync(
+    Crypto.CryptoDigestAlgorithm.SHA256,
+    key
+  );
+  const encoder = new TextEncoder();
+  const data = encoder.encode(text);
+  const keyBuffer = encoder.encode(keyHash.substring(0, 32));
+  
+  let result = '';
+  for (let i = 0; i < data.length; i++) {
+    result += String.fromCharCode(data[i] ^ keyBuffer[i % keyBuffer.length]);
+  }
+  return btoa(result);
+};
+
+const decrypt = async (encrypted: string, key: string): Promise<string> => {
+  const keyHash = await Crypto.digestStringAsync(
+    Crypto.CryptoDigestAlgorithm.SHA256,
+    key
+  );
+  const decoder = new TextDecoder();
+  const keyBuffer = new TextEncoder().encode(keyHash.substring(0, 32));
+  const decoded = atob(encrypted);
+  
+  let result = new Uint8Array(decoded.length);
+  for (let i = 0; i < decoded.length; i++) {
+    result[i] = decoded.charCodeAt(i) ^ keyBuffer[i % keyBuffer.length];
+  }
+  return decoder.decode(result);
+};
 
 export default function HomeScreen({ route }: HomeScreenProps) {
   const { username, cKey } = route.params;
@@ -20,9 +53,7 @@ export default function HomeScreen({ route }: HomeScreenProps) {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editText, setEditText] = useState('');
 
-  // Initial fetch
   useEffect(() => {
-    console.log('HERE IS THE CKEY: ', cKey);
     fetchTodos();
   }, []);
 
@@ -35,7 +66,17 @@ export default function HomeScreen({ route }: HomeScreenProps) {
     if (error) {
       console.log('Error fetching todos: ', error);
     } else {
-      setTodos(data || []);
+      const decryptedTodos = await Promise.all(
+        data.map(async (todo) => {
+          try {
+            const decryptedLine = await decrypt(todo.line, cKey);
+            return { ...todo, line: decryptedLine };
+          } catch {
+            return todo;
+          }
+        })
+      );
+      setTodos(decryptedTodos || []);
     }
   };
 
@@ -45,9 +86,11 @@ export default function HomeScreen({ route }: HomeScreenProps) {
       return;
     }
 
+    const encryptedTask = await encrypt(task, cKey);
+
     const { error } = await supabase
       .from('todos')
-      .insert([{ line: task, username }]);
+      .insert([{ line: encryptedTask, username }]);
 
     if (!error) {
       setTask('');
@@ -75,16 +118,17 @@ export default function HomeScreen({ route }: HomeScreenProps) {
   };
 
   const saveEdit = async (id: number) => {
+    const encryptedText = await encrypt(editText, cKey);
+
     const { error } = await supabase
       .from('todos')
-      .update({ line: editText })
+      .update({ line: encryptedText })
       .eq('id', id)
       .eq('username', username);
 
     if (error) {
       console.log("Update error:", error);
     } else {
-      console.log('Successfully updated data');
       setEditingId(null);
       setEditText('');
       fetchTodos();
