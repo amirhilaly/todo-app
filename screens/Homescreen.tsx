@@ -13,37 +13,7 @@ type Todo = {
 
 type HomeScreenProps = NativeStackScreenProps<RootStackParamList, 'Home'>;
 
-const encrypt = async (text: string, key: string): Promise<string> => {
-  const keyHash = await Crypto.digestStringAsync(
-    Crypto.CryptoDigestAlgorithm.SHA256,
-    key
-  );
-  const encoder = new TextEncoder();
-  const data = encoder.encode(text);
-  const keyBuffer = encoder.encode(keyHash.substring(0, 32));
   
-  let result = '';
-  for (let i = 0; i < data.length; i++) {
-    result += String.fromCharCode(data[i] ^ keyBuffer[i % keyBuffer.length]);
-  }
-  return btoa(result);
-};
-
-const decrypt = async (encrypted: string, key: string): Promise<string> => {
-  const keyHash = await Crypto.digestStringAsync(
-    Crypto.CryptoDigestAlgorithm.SHA256,
-    key
-  );
-  const decoder = new TextDecoder();
-  const keyBuffer = new TextEncoder().encode(keyHash.substring(0, 32));
-  const decoded = atob(encrypted);
-  
-  let result = new Uint8Array(decoded.length);
-  for (let i = 0; i < decoded.length; i++) {
-    result[i] = decoded.charCodeAt(i) ^ keyBuffer[i % keyBuffer.length];
-  }
-  return decoder.decode(result);
-};
 
 export default function HomeScreen({ route }: HomeScreenProps) {
   const { username, cKey } = route.params;
@@ -66,17 +36,7 @@ export default function HomeScreen({ route }: HomeScreenProps) {
     if (error) {
       console.log('Error fetching todos: ', error);
     } else {
-      const decryptedTodos = await Promise.all(
-        data.map(async (todo) => {
-          try {
-            const decryptedLine = await decrypt(todo.line, cKey);
-            return { ...todo, line: decryptedLine };
-          } catch {
-            return todo;
-          }
-        })
-      );
-      setTodos(decryptedTodos || []);
+      setTodos(data || []);
     }
   };
 
@@ -86,11 +46,9 @@ export default function HomeScreen({ route }: HomeScreenProps) {
       return;
     }
 
-    const encryptedTask = await encrypt(task, cKey);
-
     const { error } = await supabase
       .from('todos')
-      .insert([{ line: encryptedTask, username }]);
+      .insert([{ line: task, username }]);
 
     if (!error) {
       setTask('');
@@ -118,11 +76,9 @@ export default function HomeScreen({ route }: HomeScreenProps) {
   };
 
   const saveEdit = async (id: number) => {
-    const encryptedText = await encrypt(editText, cKey);
-
     const { error } = await supabase
       .from('todos')
-      .update({ line: encryptedText })
+      .update({ line: editText })
       .eq('id', id)
       .eq('username', username);
 
@@ -153,7 +109,11 @@ export default function HomeScreen({ route }: HomeScreenProps) {
           renderItem={({ item }) => (
             <View style={styles.todoItem}>
               <Text style={styles.catIcon}>🐱</Text>
-              {editingId === item.id ? (
+
+            
+              
+              {editingId === item.id ? // Je fais une comparaison, si editingID est égal a item.ID je modifie la ligne pour qu'elle puisse être edit, en gros
+              (  // Si True
                 <>
                   <TextInput
                     style={styles.editInput}
@@ -164,16 +124,18 @@ export default function HomeScreen({ route }: HomeScreenProps) {
                   <Button 
                     title="✅" 
                     onPress={() => saveEdit(item.id)}
+
                     buttonStyle={styles.saveButton}
                     titleStyle={styles.buttonText}
                   />
                 </>
-              ) : (
+              ) : ( // Si False
                 <>
                   <Text style={styles.todoText}>{item.line}</Text>
                   <Button 
                     title="✏️" 
                     onPress={() => startEditing(item.id, item.line)}
+
                     buttonStyle={styles.editButton}
                     titleStyle={styles.buttonText}
                   />
